@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <title>ASR 情感陪护联调工具</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .controls {
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+
+        #startBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        #stopBtn {
+            background-color: #f44336;
+            color: white;
+        }
+
+        #stopBtn:disabled {
+            background-color: #ccc;
+        }
+
+        .result-box {
+            display: flex;
+            gap: 20px;
+        }
+
+        .panel {
+            flex: 1;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 8px;
+            min-height: 200px;
+        }
+
+        .emotion-tag {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            background: #eee;
+            font-weight: bold;
+        }
+
+        #log {
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+            overflow-y: auto;
+            max-height: 300px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>ASR 接口 Demo</h1>
+    <p>作用：每 1 秒切片一次并上传，识别文字并提取情感。</p>
+
+    <div class="controls">
+        <button id="startBtn">开始录音</button>
+        <button id="stopBtn" disabled>结束并完成</button>
+    </div>
+
+    <div class="result-box">
+        <div class="panel">
+            <h3>识别文本 </h3>
+            <div id="textOutput">等待输入...</div>
+            <hr>
+            <h3>情感状态 </h3>
+            <div id="emotionOutput" class="emotion-tag">NEUTRAL</div>
+        </div>
+        <div class="panel">
+            <h3>请求日志 </h3>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let chunkIndex = 0;
+        let sessionId = "session_" + Date.now();
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const textOutput = document.getElementById('textOutput');
+        const emotionOutput = document.getElementById('emotionOutput');
+        const log = document.getElementById('log');
+
+        function addLog(msg) {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            log.prepend(entry);
+        }
+
+        startBtn.onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // 指定采样率为 16k 最佳，此处用浏览器默认，模型会自动重采样
+            mediaRecorder = new MediaRecorder(stream);
+
+            chunkIndex = 0;
+            sessionId = "session_" + Date.now();
+            textOutput.innerText = "录音中...";
+            addLog("开始新会话: " + sessionId);
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    sendChunk(event.data, chunkIndex++);
+                }
+            };
+
+            // 关键点：设置每 1000ms 触发一次 ondataavailable
+            mediaRecorder.start(1000);
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+        };
+
+        stopBtn.onclick = () => {
+            mediaRecorder.stop();
+            // 最后发一个空的标记 is_final
+            sendChunk(new Blob([]), chunkIndex, true);
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            addLog("录音停止");
+        };
+
+        async function sendChunk(blob, index, isFinal = false) {
+            const formData = new FormData();
+            formData.append('file', blob, `chunk_${index}.wav`);
+            formData.append('session_id', sessionId);
+            formData.append('chunk_index', index);
+            formData.append('is_final', isFinal);
+
+            addLog(`发送切片 #${index} (is_final: ${isFinal})`);
+
+            try {
+                const response = await fetch('http://127.0.0.1:18080/asr/chunk', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                if (result.ok) {
+                    if (result.text) textOutput.innerText = result.text;
+                    if (result.metadata.emotion) {
+                        emotionOutput.innerText = result.metadata.emotion;
+                        // 简单变色演示
+                        emotionOutput.style.background = (result.metadata.emotion === 'HAPPY') ? '#c8e6c9' :
+                            (result.metadata.emotion === 'SAD') ? '#bbdefb' : '#eee';
+                    }
+                }
+            } catch (err) {
+                addLog("请求失败，请确认后端服务已启动且允许跨域");
+            }
+        }
+    </script>
+</body>
+
+</html>
