@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASR Evaluation Demo</title>
+    <style>
+        :root {
+            --bg: #f4f7fb;
+            --card: #ffffff;
+            --line: #d8e0ea;
+            --text: #16324a;
+            --muted: #5f7488;
+            --primary: #0f6cbd;
+            --primary-hover: #0b5ca2;
+            --danger: #bf2f45;
+            --success-bg: #edf8ef;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Microsoft YaHei", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, #dbeeff 0, transparent 28%),
+                linear-gradient(180deg, #eef4fb 0%, #f8fafc 100%);
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 760px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 18px 40px rgba(16, 42, 67, 0.08);
+        }
+
+        h1 {
+            margin: 0 0 12px;
+            font-size: 28px;
+        }
+
+        p {
+            margin: 0 0 16px;
+            color: var(--muted);
+            line-height: 1.7;
+        }
+
+        label {
+            display: block;
+            margin: 16px 0 8px;
+            font-weight: 600;
+        }
+
+        input[type="text"],
+        input[type="file"] {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            font-size: 15px;
+            background: #fff;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 12px 18px;
+            border: 0;
+            border-radius: 10px;
+            background: var(--primary);
+            color: #fff;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: var(--primary-hover);
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .panel {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 12px;
+            background: #f8fbff;
+            border: 1px solid var(--line);
+        }
+
+        .result {
+            background: var(--success-bg);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .error {
+            color: var(--danger);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        code {
+            font-family: Consolas, monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>ASR Evaluation Demo</h1>
+            <p>Select an mp3 file and send it to the evaluation endpoint as a raw binary request body.</p>
+
+            <label for="endpoint">Endpoint</label>
+            <input id="endpoint" type="text" value="http://127.0.0.1:18080/asr/file">
+
+            <label for="audioFile">MP3 File</label>
+            <input id="audioFile" type="file" accept=".mp3,audio/mpeg">
+
+            <button id="submitBtn" type="button">Upload and Transcribe</button>
+
+            <div class="panel">
+                <strong>Request</strong>
+                <p>Method: <code>POST</code><br>Content-Type: <code>audio/mpeg</code><br>Body: raw mp3 bytes</p>
+            </div>
+
+            <div class="panel result">
+                <strong>Response</strong>
+                <div id="resultText">Waiting for upload...</div>
+            </div>
+
+            <div class="panel error">
+                <strong>Error</strong>
+                <div id="errorText">None</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const endpointInput = document.getElementById("endpoint");
+        const audioFileInput = document.getElementById("audioFile");
+        const submitBtn = document.getElementById("submitBtn");
+        const resultText = document.getElementById("resultText");
+        const errorText = document.getElementById("errorText");
+
+        submitBtn.addEventListener("click", async () => {
+            const file = audioFileInput.files[0];
+            const endpoint = endpointInput.value.trim();
+
+            resultText.textContent = "Waiting for upload...";
+            errorText.textContent = "None";
+
+            if (!endpoint) {
+                errorText.textContent = "Please enter the endpoint URL.";
+                return;
+            }
+
+            if (!file) {
+                errorText.textContent = "Please choose an mp3 file first.";
+                return;
+            }
+
+            if (!file.name.toLowerCase().endsWith(".mp3")) {
+                errorText.textContent = "Only mp3 files are supported.";
+                return;
+            }
+
+            submitBtn.disabled = true;
+            resultText.textContent = "Transcribing...";
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "audio/mpeg"
+                    },
+                    body: file
+                });
+
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw new Error(payload.detail || JSON.stringify(payload, null, 2));
+                }
+
+                resultText.textContent = JSON.stringify(payload, null, 2);
+            } catch (error) {
+                errorText.textContent = error.message || String(error);
+                resultText.textContent = "Transcription failed.";
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

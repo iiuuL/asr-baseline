@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -46,6 +46,23 @@ def normalize_metadata(raw_metadata: Any) -> dict[str, Any]:
         output["events"] = []
 
     return output
+
+
+def is_likely_mp3(audio_bytes: bytes, content_type: Optional[str]) -> bool:
+    """基于 Content-Type 和文件头做一个轻量 mp3 判断。"""
+    normalized_type = (content_type or "").split(";")[0].strip().lower()
+    allowed_types = {"audio/mpeg", "audio/mp3", "application/octet-stream", ""}
+    if normalized_type not in allowed_types:
+        return False
+
+    if len(audio_bytes) < 2:
+        return False
+
+    if audio_bytes.startswith(b"ID3"):
+        return True
+
+    # MP3 帧同步头通常以 0xFF 开头，随后高 3 位为 1。
+    return audio_bytes[0] == 0xFF and (audio_bytes[1] & 0xE0) == 0xE0
 
 
 @asynccontextmanager
@@ -89,6 +106,64 @@ def health_check():
         "model_loaded": bool(status.get("model_loaded", False)),
         "model_name": status.get("model_name", "iic/SenseVoiceSmall"),
     }
+
+
+@app.post("/asr/file")
+@app.post("/asr/evaluate")
+async def asr_evaluate(request: Request):
+    """
+    评测接口：
+    - Body 直接上传 mp3 二进制
+    - 仅按中文识别
+    - 成功时返回 {"result": "..."}
+    """
+    temp_file_path: Optional[Path] = None
+
+    try:
+        if ENGINE is None:
+            raise RuntimeError("InferenceEngine 未初始化")
+
+        audio_bytes = await request.body()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="请求体为空，请直接上传 mp3 二进制数据")
+
+        content_type = request.headers.get("content-type")
+        if not is_likely_mp3(audio_bytes, content_type):
+            raise HTTPException(
+                status_code=400,
+                detail="仅支持 mp3 二进制上传，请使用 audio/mpeg 或 application/octet-stream",
+            )
+
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".mp3",
+            prefix="asr_eval_",
+        ) as temp_file:
+            temp_file.write(audio_bytes)
+            temp_file_path = Path(temp_file.name)
+
+        result = ENGINE.transcribe_file(
+            audio_path=str(temp_file_path),
+            language="zh",
+            use_itn=True,
+        )
+
+        if not result.get("ok", False):
+            raise RuntimeError(result.get("error", "推理失败"))
+
+        return {"result": result.get("text", "")}
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    finally:
+        try:
+            if temp_file_path is not None and temp_file_path.exists():
+                os.remove(temp_file_path)
+        except Exception:
+            traceback.print_exc()
 
 
 @app.post("/asr/chunk")
